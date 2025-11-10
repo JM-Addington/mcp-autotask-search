@@ -125,7 +125,7 @@ Created: {created}
 
 
 @mcp.tool()
-async def search_tickets(query: str, limit: int = 10) -> str:
+async def search_tickets(query: str, limit: int = 10, start_date: str = "", end_date: str = "") -> str:
     """
     Search Autotask tickets using advanced semantic and keyword search.
 
@@ -139,6 +139,10 @@ async def search_tickets(query: str, limit: int = 10) -> str:
         query: Search query (supports partial company names, keywords, descriptions).
                Works well with imperfect queries including typos and vague descriptions.
         limit: Maximum number of results to return (default: 10, max: 100)
+        start_date: Optional start date filter in YYYY-MM-DD format (e.g., "2024-01-01").
+                   Only tickets created on or after this date will be returned.
+        end_date: Optional end date filter in YYYY-MM-DD format (e.g., "2024-12-31").
+                 Only tickets created on or before this date will be returned.
 
     Returns:
         Formatted search results with task numbers, titles, descriptions, and relevance scores.
@@ -147,10 +151,10 @@ async def search_tickets(query: str, limit: int = 10) -> str:
     Examples:
         - "password reset issues"
         - "outlook email problems for ABC Company"
-        - "network connectivity"
-        - "slow computer performance"
+        - "network connectivity from last month" with start_date="2024-11-01"
+        - "slow computer performance" with start_date="2024-01-01" and end_date="2024-06-30"
     """
-    logger.info(f"Searching tickets with query: '{query}' (limit: {limit}) [MCPS-SEARCH]")
+    logger.info(f"Searching tickets with query: '{query}' (limit: {limit}, dates: {start_date} to {end_date}) [MCPS-SEARCH]")
 
     # Validate limit
     if limit < 1:
@@ -163,6 +167,12 @@ async def search_tickets(query: str, limit: int = 10) -> str:
         async with httpx.AsyncClient(timeout=30.0) as client:
             headers = {"Authorization": f"Bearer {API_KEY}"}
             params = {"q": query, "limit": limit}
+
+            # Add date filters if provided
+            if start_date:
+                params["start_date"] = start_date
+            if end_date:
+                params["end_date"] = end_date
 
             url = f"{BASE_URL}/api/search/double-reranked/"
             logger.info(f"Making request to: {url} [MCPS-REQ]")

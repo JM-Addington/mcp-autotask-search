@@ -130,6 +130,32 @@ Show me all notes for task_id 67890
 - All human-created notes with timestamps
 - Status and priority information
 
+### 3. `get_tickets_notes`
+
+Get notes for multiple tickets in bulk. More efficient than calling `get_ticket_details` multiple times when you only need notes.
+
+**Parameters:**
+- `task_ids` (list of integers, optional): List of task IDs. Example: `[12345, 67890]`
+- `task_numbers` (list of strings, optional): List of ticket numbers. Example: `["T20240101.0001", "T20240102.0005"]`
+
+**Notes:**
+- At least one parameter must be provided
+- Maximum of 50 tickets per request
+- Only returns human-created notes (system notes excluded)
+- Results grouped by ticket and sorted chronologically
+
+**Example Usage:**
+```
+Get notes for tickets 12345 and 67890
+Show me notes for tickets T20240101.0001 and T20240102.0005
+Get all notes for task_ids [100, 101, 102]
+```
+
+**Returns:**
+- All notes for each ticket
+- Note timestamps and titles
+- Notes grouped by ticket
+
 ## Usage Examples
 
 ### In Claude Desktop/Cursor
@@ -144,6 +170,10 @@ Once configured, you can ask Claude:
 "Show me recent tickets about network problems"
 
 "Get the full details for ticket 12345"
+
+"Get all notes for tickets 12345, 67890, and 11111"
+
+"Show me notes for tickets T20240101.0001 and T20240102.0005"
 ```
 
 Claude will use the MCP tools to search the Autotask database and return formatted results.
@@ -274,6 +304,19 @@ grep "MCPS-AUTH" logs.txt
 - `MCPS-START` - Server starting
 - `MCPS-SEARCH` - Search request
 - `MCPS-DETAIL` - Detail request
+- `MCPS-NOTES-REQ` - Bulk notes request
+- `MCPS-NOTES-POST` - Bulk notes POST request
+- `MCPS-NOTES-OK` - Bulk notes success
+- `MCPS-NOTES-NOPARAM` - No parameters provided
+- `MCPS-NOTES-EMPTY` - Empty parameters
+- `MCPS-NOTES-LIMIT` - Too many tickets requested
+- `MCPS-NOTES-AUTH` - Authentication failed
+- `MCPS-NOTES-BADREQ` - Bad request
+- `MCPS-NOTES-404` - Endpoint not found
+- `MCPS-NOTES-SVR` - Server error
+- `MCPS-NOTES-CONN` - Connection error
+- `MCPS-NOTES-TIMEOUT` - Request timeout
+- `MCPS-NOTES-ERR` - Unexpected error
 - `MCPS-NOKEY` - API key missing
 - `MCPS-AUTH` - Authentication failed
 - `MCPS-CONN` - Connection error

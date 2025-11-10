@@ -105,12 +105,12 @@ Created: {created}
 """
 
     # Add notes if available
-    notes = ticket.get('human_created_notes', [])
+    notes = ticket.get('notes', [])
     if notes:
         result += "Notes:\n"
         for i, note in enumerate(notes, 1):
-            note_text = note.get('note_text', '')
-            note_date = note.get('create_date_time', '')
+            note_text = note.get('detail', '')
+            note_date = note.get('created', '')
             if note_date:
                 try:
                     dt = datetime.fromisoformat(note_date.replace('Z', '+00:00'))
@@ -122,6 +122,55 @@ Created: {created}
         result += "Notes: None\n"
 
     return result
+
+
+def format_tickets_notes_for_llm(response_data: dict) -> str:
+    """
+    Format bulk notes response for optimal LLM readability.
+
+    AIDEV-NOTE: llm-formatting; groups notes by ticket with chronological ordering
+    """
+    tickets = response_data.get('tickets', [])
+    total_tickets = response_data.get('total_tickets', 0)
+    total_notes = response_data.get('total_notes', 0)
+
+    if not tickets:
+        return "No tickets found with the provided IDs or ticket numbers."
+
+    result = [f"Found {total_notes} notes across {total_tickets} tickets:\n"]
+
+    for ticket_data in tickets:
+        task_number = ticket_data.get('task_number', 'N/A')
+        task_id = ticket_data.get('task_id', 'N/A')
+        notes = ticket_data.get('notes', [])
+        note_count = ticket_data.get('note_count', 0)
+
+        result.append(f"\n=== Task #{task_number} (ID: {task_id}) - {note_count} notes ===")
+
+        if notes:
+            for i, note in enumerate(notes, 1):
+                note_text = note.get('detail', 'No content')
+                note_date = note.get('created', 'Unknown')
+                note_title = note.get('title', '')
+
+                # Format date if available
+                if note_date and note_date != 'Unknown':
+                    try:
+                        dt = datetime.fromisoformat(note_date.replace('Z', '+00:00'))
+                        note_date = dt.strftime('%Y-%m-%d %H:%M')
+                    except Exception:
+                        pass
+
+                # Add title if present
+                title_part = f" - {note_title}" if note_title else ""
+                result.append(f"\n[Note {i} - {note_date}{title_part}]")
+                result.append(note_text)
+        else:
+            result.append("\nNo notes found for this ticket.")
+
+        result.append("\n---")
+
+    return "\n".join(result)
 
 
 @mcp.tool()
@@ -309,6 +358,127 @@ async def get_ticket_details(task_id: int) -> str:
         return "Error: Request timed out. Please try again."
     except Exception as e:
         logger.error(f"Unexpected error getting ticket details: {str(e)} [MCPS-ERR]")
+        return f"Error: An unexpected error occurred: {str(e)}"
+
+
+@mcp.tool()
+async def get_tickets_notes(task_ids: list[int] = None, task_numbers: list[str] = None) -> str:
+    """
+    Get notes for multiple tickets in bulk.
+
+    Retrieve all human-created notes for specified tickets. You can provide either
+    task IDs, ticket numbers, or both. This is more efficient than calling
+    get_ticket_details multiple times when you only need the notes.
+
+    Args:
+        task_ids: Optional list of task IDs (integers). Example: [12345, 67890]
+        task_numbers: Optional list of ticket numbers (strings). Example: ["T20240101.0001", "T20240102.0005"]
+
+    Returns:
+        All notes for the specified tickets, grouped by ticket and sorted chronologically.
+        Each note includes timestamp, optional title, and full content.
+
+    Notes:
+        - At least one parameter (task_ids or task_numbers) must be provided
+        - Maximum of 50 tickets can be requested at once
+        - Only returns human-created notes (system-generated notes are excluded)
+
+    Examples:
+        - get_tickets_notes(task_ids=[12345, 67890])
+        - get_tickets_notes(task_numbers=["T20240101.0001", "T20240102.0005"])
+        - get_tickets_notes(task_ids=[12345], task_numbers=["T20240101.0001"])
+    """
+    # AIDEV-NOTE: bulk-notes-retrieval; supports both task_id and task_number lookups
+    logger.info(f"Getting notes for task_ids: {task_ids}, task_numbers: {task_numbers} [MCPS-NOTES-REQ]")
+
+    # Validate parameters
+    if not task_ids and not task_numbers:
+        logger.error("No task_ids or task_numbers provided [MCPS-NOTES-NOPARAM]")
+        return "Error: At least one of task_ids or task_numbers must be provided."
+
+    # Convert None to empty lists for easier handling
+    task_ids = task_ids or []
+    task_numbers = task_numbers or []
+
+    # Validate total count
+    total_requested = len(task_ids) + len(task_numbers)
+    if total_requested > 50:
+        logger.error(f"Too many tickets requested: {total_requested} [MCPS-NOTES-LIMIT]")
+        return f"Error: Cannot request more than 50 tickets at once. You requested {total_requested}."
+
+    if total_requested == 0:
+        logger.error("Empty lists provided [MCPS-NOTES-EMPTY]")
+        return "Error: task_ids and task_numbers cannot both be empty lists."
+
+    try:
+        # Make API request
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            headers = {
+                "Authorization": f"Bearer {API_KEY}",
+                "Content-Type": "application/json"
+            }
+            url = f"{BASE_URL}/api/tickets/notes/"
+
+            # Build request body
+            body = {}
+            if task_ids:
+                body["task_ids"] = task_ids
+            if task_numbers:
+                body["task_numbers"] = task_numbers
+
+            logger.info(f"Making POST request to: {url} [MCPS-NOTES-POST]")
+
+            response = await client.post(url, headers=headers, json=body)
+
+            # Check for errors
+            if response.status_code == 401:
+                logger.error("Authentication failed [MCPS-NOTES-AUTH]")
+                return (
+                    "Error: Authentication failed. Please check your AUTOTASK_API_KEY."
+                )
+
+            if response.status_code == 400:
+                logger.error(f"Bad request: {response.text} [MCPS-NOTES-BADREQ]")
+                try:
+                    error_data = response.json()
+                    error_msg = error_data.get('error', 'Invalid request parameters')
+                    return f"Error: {error_msg}"
+                except Exception:
+                    return f"Error: Bad request - {response.text}"
+
+            if response.status_code == 404:
+                logger.error("API endpoint not found [MCPS-NOTES-404]")
+                return (
+                    f"Error: API endpoint not found at {BASE_URL}. "
+                    "Please check that the Autotask Django server is running and up to date."
+                )
+
+            if response.status_code >= 500:
+                logger.error(f"Server error: {response.status_code} [MCPS-NOTES-SVR]")
+                return (
+                    f"Error: Server error ({response.status_code}). "
+                    "The Autotask service may be experiencing issues."
+                )
+
+            response.raise_for_status()
+            data = response.json()
+
+            # Format response for LLM
+            result = format_tickets_notes_for_llm(data)
+            logger.info(f"Retrieved notes for {data.get('total_tickets', 0)} tickets [MCPS-NOTES-OK]")
+            return result
+
+    except httpx.ConnectError:
+        logger.error(f"Connection failed to {BASE_URL} [MCPS-NOTES-CONN]")
+        return (
+            f"Error: Could not connect to Autotask API at {BASE_URL}. "
+            "Please check that the Django server is running."
+        )
+    except httpx.TimeoutException:
+        logger.error("Request timeout [MCPS-NOTES-TIMEOUT]")
+        return "Error: Request timed out. Please try again."
+    except Exception as e:
+        logger.error(f"Unexpected error getting bulk notes: {str(e)} [MCPS-NOTES-ERR]")
         return f"Error: An unexpected error occurred: {str(e)}"
 
 

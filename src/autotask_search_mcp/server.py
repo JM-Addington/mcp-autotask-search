@@ -53,9 +53,11 @@ def format_ticket_for_llm(ticket: dict) -> str:
     """
     task_number = ticket.get('task_number', 'N/A')
     task_id = ticket.get('task_id', 'N/A')
-    score = ticket.get('score', 0.0)
+    # API returns final_rerank_score in search results
+    score = ticket.get('final_rerank_score') or ticket.get('score', 0.0)
     title = ticket.get('task_name', 'No title')
-    description = ticket.get('task_description', 'No description')
+    # API returns preview in search results, task_description in details
+    description = ticket.get('preview') or ticket.get('task_description', 'No description')
     created = ticket.get('create_time', 'Unknown')
 
     # Format creation date if available

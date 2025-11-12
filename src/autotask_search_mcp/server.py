@@ -66,10 +66,20 @@ def format_ticket_for_llm(ticket: dict) -> str:
         except Exception:
             pass
 
+    # Add sentiment data if available
+    sentiment_info = ""
+    sentiment = ticket.get('sentiment')
+    if sentiment:
+        label = sentiment.get('label', 'unknown')
+        frustration = sentiment.get('frustration', 0.0)
+        priority = sentiment.get('priority', False)
+        priority_flag = " [PRIORITY]" if priority else ""
+        sentiment_info = f"\nSentiment: {label.upper()} (frustration: {frustration:.2f}){priority_flag}"
+
     return f"""Task #{task_number} (ID: {task_id}) - Relevance: {score:.2f}
 Title: {title}
 Description: {description}
-Created: {created}
+Created: {created}{sentiment_info}
 ---"""
 
 
@@ -77,7 +87,7 @@ def format_ticket_details_for_llm(ticket: dict) -> str:
     """
     Format detailed ticket information for LLM readability.
 
-    AIDEV-NOTE: llm-formatting; includes full ticket data with notes
+    AIDEV-NOTE: llm-formatting; includes full ticket data with notes, sentiment, and metadata
     """
     task_number = ticket.get('task_number', 'N/A')
     task_id = ticket.get('task_id', 'N/A')
@@ -86,6 +96,13 @@ def format_ticket_details_for_llm(ticket: dict) -> str:
     created = ticket.get('create_time', 'Unknown')
     status = ticket.get('status', 'Unknown')
     priority = ticket.get('priority', 'Unknown')
+
+    # Get enhanced fields
+    summary = ticket.get('summary', None)
+    assigned_resource = ticket.get('assigned_resource', None)
+    company = ticket.get('company', None)
+    contact = ticket.get('contact', None)
+    sentiment = ticket.get('sentiment', None)
 
     # Format creation date
     if created and created != 'Unknown':
@@ -101,8 +118,32 @@ Description: {description}
 Status: {status}
 Priority: {priority}
 Created: {created}
-
 """
+
+    # Add company/customer information
+    if company:
+        result += f"Company: {company}\n"
+    if contact:
+        result += f"Contact: {contact}\n"
+    if assigned_resource:
+        result += f"Assigned To: {assigned_resource}\n"
+
+    # Add sentiment analysis
+    if sentiment:
+        label = sentiment.get('label', 'unknown')
+        score = sentiment.get('score', 0.0)
+        frustration = sentiment.get('frustration', 0.0)
+        priority_flag = sentiment.get('priority', False)
+        priority_str = " [PRIORITY]" if priority_flag else ""
+        result += f"\nSentiment Analysis:\n"
+        result += f"  Overall: {label.upper()} (score: {score:.2f})\n"
+        result += f"  Frustration: {frustration:.2f}{priority_str}\n"
+
+    # Add AI-generated summary
+    if summary:
+        result += f"\nAI Summary:\n{summary}\n"
+
+    result += "\n"
 
     # Add notes if available
     notes = ticket.get('notes', [])
@@ -111,13 +152,15 @@ Created: {created}
         for i, note in enumerate(notes, 1):
             note_text = note.get('detail', '')
             note_date = note.get('created', '')
+            note_title = note.get('title', '')
             if note_date:
                 try:
                     dt = datetime.fromisoformat(note_date.replace('Z', '+00:00'))
                     note_date = dt.strftime('%Y-%m-%d %H:%M')
                 except Exception:
                     pass
-            result += f"\n[Note {i} - {note_date}]\n{note_text}\n"
+            title_str = f" - {note_title}" if note_title else ""
+            result += f"\n[Note {i}{title_str} - {note_date}]\n{note_text}\n"
     else:
         result += "Notes: None\n"
 
@@ -174,15 +217,24 @@ def format_tickets_notes_for_llm(response_data: dict) -> str:
 
 
 @mcp.tool()
-async def search_tickets(query: str, limit: int = 10, start_date: str = "", end_date: str = "") -> str:
+async def search_tickets(
+    query: str,
+    limit: int = 10,
+    start_date: str = "",
+    end_date: str = "",
+    sentiment: str = "",
+    min_frustration: float | None = None,
+    priority_only: bool = False
+) -> str:
     """
-    Search Autotask tickets using advanced semantic and keyword search.
+    Search Autotask tickets using advanced semantic and keyword search with sentiment filtering.
 
     This tool uses a sophisticated multi-method search combining:
     - BM25 full-text search
     - Semantic vector search
     - Fuzzy matching for typos
     - AI-powered reranking for relevance
+    - Sentiment analysis filtering
 
     Args:
         query: Search query (supports partial company names, keywords, descriptions).
@@ -192,18 +244,24 @@ async def search_tickets(query: str, limit: int = 10, start_date: str = "", end_
                    Only tickets created on or after this date will be returned.
         end_date: Optional end date filter in YYYY-MM-DD format (e.g., "2024-12-31").
                  Only tickets created on or before this date will be returned.
+        sentiment: Optional sentiment filter. Valid values: "negative", "neutral", "positive".
+                  Only tickets with the specified sentiment will be returned.
+        min_frustration: Optional minimum frustration score filter (0.0 to 1.0).
+                        Only tickets with frustration scores >= this value will be returned.
+        priority_only: If True, only return tickets flagged as priority (high negative sentiment + high frustration).
 
     Returns:
-        Formatted search results with task numbers, titles, descriptions, and relevance scores.
+        Formatted search results with task numbers, titles, descriptions, relevance scores, and sentiment data.
         Results are ranked by relevance with the most relevant tickets first.
 
     Examples:
         - "password reset issues"
         - "outlook email problems for ABC Company"
-        - "network connectivity from last month" with start_date="2024-11-01"
-        - "slow computer performance" with start_date="2024-01-01" and end_date="2024-06-30"
+        - "network connectivity" with sentiment="negative"
+        - "support tickets" with min_frustration=0.7
+        - "customer issues" with priority_only=True
     """
-    logger.info(f"Searching tickets with query: '{query}' (limit: {limit}, dates: {start_date} to {end_date}) [MCPS-SEARCH]")
+    logger.info(f"Searching tickets with query: '{query}' (limit: {limit}, dates: {start_date} to {end_date}, sentiment: {sentiment}, frustration: {min_frustration}, priority: {priority_only}) [MCPS-SEARCH]")
 
     # Validate limit
     if limit < 1:
@@ -222,6 +280,14 @@ async def search_tickets(query: str, limit: int = 10, start_date: str = "", end_
                 params["start_date"] = start_date
             if end_date:
                 params["end_date"] = end_date
+
+            # Add sentiment filters if provided
+            if sentiment:
+                params["sentiment"] = sentiment
+            if min_frustration is not None:
+                params["min_frustration"] = str(min_frustration)
+            if priority_only:
+                params["priority_only"] = "true"
 
             url = f"{BASE_URL}/api/search/double-reranked/"
             logger.info(f"Making request to: {url} [MCPS-REQ]")

@@ -8,6 +8,7 @@ Uses FastMCP for server implementation.
 """
 
 import os
+import json
 import logging
 from typing import Any
 from datetime import datetime
@@ -44,178 +45,8 @@ if not API_KEY:
 
 logger.info(f"Autotask Search MCP Server initialized with base URL: {BASE_URL} [MCPS-INIT]")
 
-
-def format_ticket_for_llm(ticket: dict) -> str:
-    """
-    Format a ticket result for optimal LLM readability.
-
-    AIDEV-NOTE: llm-formatting; structured text format preferred over JSON for LLM consumption
-    """
-    task_number = ticket.get('task_number', 'N/A')
-    task_id = ticket.get('task_id', 'N/A')
-    # API returns final_rerank_score in search results
-    score = ticket.get('final_rerank_score') or ticket.get('score', 0.0)
-    title = ticket.get('task_name', 'No title')
-    # API returns preview in search results, task_description in details
-    description = ticket.get('preview') or ticket.get('task_description', 'No description')
-    created = ticket.get('create_time', 'Unknown')
-
-    # Format creation date if available
-    if created and created != 'Unknown':
-        try:
-            dt = datetime.fromisoformat(created.replace('Z', '+00:00'))
-            created = dt.strftime('%Y-%m-%d %H:%M')
-        except Exception:
-            pass
-
-    # Add sentiment data if available
-    sentiment_info = ""
-    sentiment = ticket.get('sentiment')
-    if sentiment:
-        label = sentiment.get('label', 'unknown')
-        frustration = sentiment.get('frustration', 0.0)
-        priority = sentiment.get('priority', False)
-        priority_flag = " [PRIORITY]" if priority else ""
-        sentiment_info = f"\nSentiment: {label.upper()} (frustration: {frustration:.2f}){priority_flag}"
-
-    return f"""Task #{task_number} (ID: {task_id}) - Relevance: {score:.2f}
-Title: {title}
-Description: {description}
-Created: {created}{sentiment_info}
----"""
-
-
-def format_ticket_details_for_llm(ticket: dict) -> str:
-    """
-    Format detailed ticket information for LLM readability.
-
-    AIDEV-NOTE: llm-formatting; includes full ticket data with notes, sentiment, and metadata
-    """
-    task_number = ticket.get('task_number', 'N/A')
-    task_id = ticket.get('task_id', 'N/A')
-    title = ticket.get('task_name', 'No title')
-    description = ticket.get('task_description', 'No description')
-    created = ticket.get('create_time', 'Unknown')
-    status = ticket.get('status', 'Unknown')
-    priority = ticket.get('priority', 'Unknown')
-
-    # Get enhanced fields
-    summary = ticket.get('summary', None)
-    assigned_resource = ticket.get('assigned_resource', None)
-    company = ticket.get('company', None)
-    contact = ticket.get('contact', None)
-    sentiment = ticket.get('sentiment', None)
-
-    # Format creation date
-    if created and created != 'Unknown':
-        try:
-            dt = datetime.fromisoformat(created.replace('Z', '+00:00'))
-            created = dt.strftime('%Y-%m-%d %H:%M')
-        except Exception:
-            pass
-
-    result = f"""=== Task #{task_number} (ID: {task_id}) ===
-Title: {title}
-Description: {description}
-Status: {status}
-Priority: {priority}
-Created: {created}
-"""
-
-    # Add company/customer information
-    if company:
-        result += f"Company: {company}\n"
-    if contact:
-        result += f"Contact: {contact}\n"
-    if assigned_resource:
-        result += f"Assigned To: {assigned_resource}\n"
-
-    # Add sentiment analysis
-    if sentiment:
-        label = sentiment.get('label', 'unknown')
-        score = sentiment.get('score', 0.0)
-        frustration = sentiment.get('frustration', 0.0)
-        priority_flag = sentiment.get('priority', False)
-        priority_str = " [PRIORITY]" if priority_flag else ""
-        result += f"\nSentiment Analysis:\n"
-        result += f"  Overall: {label.upper()} (score: {score:.2f})\n"
-        result += f"  Frustration: {frustration:.2f}{priority_str}\n"
-
-    # Add AI-generated summary
-    if summary:
-        result += f"\nAI Summary:\n{summary}\n"
-
-    result += "\n"
-
-    # Add notes if available
-    notes = ticket.get('notes', [])
-    if notes:
-        result += "Notes:\n"
-        for i, note in enumerate(notes, 1):
-            note_text = note.get('detail', '')
-            note_date = note.get('created', '')
-            note_title = note.get('title', '')
-            if note_date:
-                try:
-                    dt = datetime.fromisoformat(note_date.replace('Z', '+00:00'))
-                    note_date = dt.strftime('%Y-%m-%d %H:%M')
-                except Exception:
-                    pass
-            title_str = f" - {note_title}" if note_title else ""
-            result += f"\n[Note {i}{title_str} - {note_date}]\n{note_text}\n"
-    else:
-        result += "Notes: None\n"
-
-    return result
-
-
-def format_tickets_notes_for_llm(response_data: dict) -> str:
-    """
-    Format bulk notes response for optimal LLM readability.
-
-    AIDEV-NOTE: llm-formatting; groups notes by ticket with chronological ordering
-    """
-    tickets = response_data.get('tickets', [])
-    total_tickets = response_data.get('total_tickets', 0)
-    total_notes = response_data.get('total_notes', 0)
-
-    if not tickets:
-        return "No tickets found with the provided IDs or ticket numbers."
-
-    result = [f"Found {total_notes} notes across {total_tickets} tickets:\n"]
-
-    for ticket_data in tickets:
-        task_number = ticket_data.get('task_number', 'N/A')
-        task_id = ticket_data.get('task_id', 'N/A')
-        notes = ticket_data.get('notes', [])
-        note_count = ticket_data.get('note_count', 0)
-
-        result.append(f"\n=== Task #{task_number} (ID: {task_id}) - {note_count} notes ===")
-
-        if notes:
-            for i, note in enumerate(notes, 1):
-                note_text = note.get('detail', 'No content')
-                note_date = note.get('created', 'Unknown')
-                note_title = note.get('title', '')
-
-                # Format date if available
-                if note_date and note_date != 'Unknown':
-                    try:
-                        dt = datetime.fromisoformat(note_date.replace('Z', '+00:00'))
-                        note_date = dt.strftime('%Y-%m-%d %H:%M')
-                    except Exception:
-                        pass
-
-                # Add title if present
-                title_part = f" - {note_title}" if note_title else ""
-                result.append(f"\n[Note {i} - {note_date}{title_part}]")
-                result.append(note_text)
-        else:
-            result.append("\nNo notes found for this ticket.")
-
-        result.append("\n---")
-
-    return "\n".join(result)
+# NOTE: Removed text formatting functions - now returning structured JSON directly
+# to allow MCP clients to display data in their preferred format
 
 
 @mcp.tool()
@@ -327,18 +158,22 @@ async def search_tickets(
 
             if not results:
                 logger.info(f"No results found for query: '{query}' [MCPS-NORES]")
-                return f"No tickets found matching query: '{query}'"
+                return json.dumps({
+                    "query": query,
+                    "count": 0,
+                    "results": []
+                }, indent=2)
 
-            # Format results for LLM
-            formatted_results = []
-            formatted_results.append(f"Found {len(results)} tickets matching '{query}':\n")
+            # Return structured JSON response
+            response_data = {
+                "query": query,
+                "count": len(results),
+                "filters": data.get('filters', {}),
+                "results": results
+            }
 
-            for ticket in results:
-                formatted_results.append(format_ticket_for_llm(ticket))
-
-            result_text = "\n".join(formatted_results)
             logger.info(f"Returned {len(results)} results [MCPS-OK]")
-            return result_text
+            return json.dumps(response_data, indent=2)
 
     except httpx.ConnectError:
         logger.error(f"Connection failed to {BASE_URL} [MCPS-CONN]")
@@ -410,10 +245,9 @@ async def get_ticket_details(task_id: int) -> str:
             response.raise_for_status()
             ticket = response.json()
 
-            # Format ticket details for LLM
-            result = format_ticket_details_for_llm(ticket)
+            # Return structured JSON response
             logger.info(f"Retrieved details for task_id: {task_id} [MCPS-OK]")
-            return result
+            return json.dumps(ticket, indent=2)
 
     except httpx.ConnectError:
         logger.error(f"Connection failed to {BASE_URL} [MCPS-CONN]")
@@ -531,10 +365,9 @@ async def get_tickets_notes(task_ids: list[int] = None, task_numbers: list[str] 
             response.raise_for_status()
             data = response.json()
 
-            # Format response for LLM
-            result = format_tickets_notes_for_llm(data)
+            # Return structured JSON response
             logger.info(f"Retrieved notes for {data.get('total_tickets', 0)} tickets [MCPS-NOTES-OK]")
-            return result
+            return json.dumps(data, indent=2)
 
     except httpx.ConnectError:
         logger.error(f"Connection failed to {BASE_URL} [MCPS-NOTES-CONN]")

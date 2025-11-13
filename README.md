@@ -10,7 +10,9 @@ This MCP server provides LLMs with the ability to search and retrieve Autotask t
 
 - **Advanced Search**: Multi-method search combining BM25, semantic vectors, and fuzzy matching
 - **AI Reranking**: Results are reranked using cross-encoder models for optimal relevance
+- **Related Tickets**: Find semantically similar tickets using vector similarity and AI re-ranking
 - **Detailed Ticket Info**: Retrieve complete ticket details including all notes
+- **Bulk Operations**: Fetch notes for multiple tickets efficiently
 - **LLM-Optimized**: Results formatted for easy LLM comprehension
 - **Robust Error Handling**: Clear error messages with unique grep codes for debugging
 - **Easy Setup**: Shell wrapper handles venv creation and dependencies
@@ -130,7 +132,32 @@ Show me all notes for task_id 67890
 - All human-created notes with timestamps
 - Status and priority information
 
-### 3. `get_tickets_notes`
+### 3. `get_related_tickets`
+
+Find tickets semantically related to a given ticket using vector similarity and AI re-ranking.
+
+**Parameters:**
+- `task_id` (integer, required): The numeric task ID to find related tickets for
+- `limit` (integer, optional): Maximum results to return (default: 10, max: 30)
+
+**Example Usage:**
+```
+Find tickets related to task 12345
+Show me similar tickets to ticket 67890
+Get 20 related tickets for task_id 54321
+```
+
+**How It Works:**
+- Uses vector embeddings to find semantically similar tickets
+- Re-ranks results with AI model for optimal relevance
+- Returns tickets with similar issues, topics, or root causes
+
+**Returns:**
+- List of related tickets with task numbers and titles
+- Relevance scores for each related ticket
+- Results ranked by relevance
+
+### 4. `get_tickets_notes`
 
 Get notes for multiple tickets in bulk. More efficient than calling `get_ticket_details` multiple times when you only need notes.
 
@@ -170,6 +197,10 @@ Once configured, you can ask Claude:
 "Show me recent tickets about network problems"
 
 "Get the full details for ticket 12345"
+
+"Find tickets similar to ticket 12345"
+
+"Show me related tickets for task 67890"
 
 "Get all notes for tickets 12345, 67890, and 11111"
 
@@ -304,6 +335,7 @@ grep "MCPS-AUTH" logs.txt
 - `MCPS-START` - Server starting
 - `MCPS-SEARCH` - Search request
 - `MCPS-DETAIL` - Detail request
+- `MCPS-RELATED` - Related tickets request
 - `MCPS-NOTES-REQ` - Bulk notes request
 - `MCPS-NOTES-POST` - Bulk notes POST request
 - `MCPS-NOTES-OK` - Bulk notes success
@@ -321,8 +353,12 @@ grep "MCPS-AUTH" logs.txt
 - `MCPS-AUTH` - Authentication failed
 - `MCPS-CONN` - Connection error
 - `MCPS-404` - Endpoint not found
+- `MCPS-NOTFOUND` - Ticket not found
 - `MCPS-SVR` - Server error
 - `MCPS-TIMEOUT` - Request timeout
+- `MCPS-REQ` - Making API request
+- `MCPS-OK` - Request successful
+- `MCPS-NORES` - No results found
 - `MCPS-ERR` - Unexpected error
 
 ## Technical Details

@@ -264,6 +264,91 @@ async def get_ticket_details(task_id: int) -> str:
 
 
 @mcp.tool()
+async def get_related_tickets(task_id: int, limit: int = 10) -> str:
+    """
+    Find tickets semantically related to a given ticket using vector similarity and AI re-ranking.
+
+    This tool finds tickets that are similar in content, topic, or issue type by:
+    1. Using vector embeddings to find semantically similar tickets
+    2. Re-ranking results with an AI model for optimal relevance
+    3. Returning the most related tickets with relevance scores
+
+    This is useful for:
+    - Finding similar issues or tickets
+    - Discovering patterns across related tickets
+    - Finding tickets that might share the same root cause
+    - Research and analysis of ticket trends
+
+    Args:
+        task_id: The numeric task ID of the ticket to find related tickets for
+        limit: Maximum number of related tickets to return (default: 10, max: 30)
+
+    Returns:
+        List of related tickets with task numbers, titles, and relevance scores.
+        Results are ranked by relevance with the most related tickets first.
+
+    Example:
+        get_related_tickets(12345, limit=10)
+    """
+    logger.info(f"Finding related tickets for task_id: {task_id} (limit: {limit}) [MCPS-RELATED]")
+
+    # Validate limit
+    if limit < 1:
+        limit = 10
+    if limit > 30:
+        limit = 30
+
+    try:
+        # Make API request
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            headers = {"Authorization": f"Bearer {API_KEY}"}
+            params = {"limit": limit}
+            url = f"{BASE_URL}/api/ticket/{task_id}/related/"
+
+            logger.info(f"Making request to: {url} [MCPS-REQ]")
+
+            response = await client.get(url, headers=headers, params=params)
+
+            # Check for errors
+            if response.status_code == 401:
+                logger.error(f"Authentication failed [MCPS-AUTH]")
+                return (
+                    "Error: Authentication failed. Please check your AUTOTASK_API_KEY."
+                )
+
+            if response.status_code == 404:
+                logger.error(f"Ticket not found or endpoint not available: {task_id} [MCPS-NOTFOUND]")
+                return f"Error: Ticket with ID {task_id} not found or related tickets endpoint not available."
+
+            if response.status_code >= 500:
+                logger.error(f"Server error: {response.status_code} [MCPS-SVR]")
+                return (
+                    f"Error: Server error ({response.status_code}). "
+                    "The Autotask service may be experiencing issues."
+                )
+
+            response.raise_for_status()
+            data = response.json()
+
+            # Return structured JSON response
+            logger.info(f"Retrieved {len(data.get('related_tickets', []))} related tickets for task_id: {task_id} [MCPS-OK]")
+            return json.dumps(data, indent=2)
+
+    except httpx.ConnectError:
+        logger.error(f"Connection failed to {BASE_URL} [MCPS-CONN]")
+        return (
+            f"Error: Could not connect to Autotask API at {BASE_URL}. "
+            "Please check that the Django server is running."
+        )
+    except httpx.TimeoutException:
+        logger.error(f"Request timeout [MCPS-TIMEOUT]")
+        return "Error: Request timed out. Please try again."
+    except Exception as e:
+        logger.error(f"Unexpected error getting related tickets: {str(e)} [MCPS-ERR]")
+        return f"Error: An unexpected error occurred: {str(e)}"
+
+
+@mcp.tool()
 async def get_tickets_notes(task_ids: list[int] = None, task_numbers: list[str] = None) -> str:
     """
     Get notes for multiple tickets in bulk.

@@ -10,6 +10,7 @@ Uses FastMCP for server implementation.
 import os
 import json
 import logging
+import asyncio
 from typing import Any
 from datetime import datetime
 
@@ -52,7 +53,8 @@ logger.info(f"Autotask Search MCP Server initialized with base URL: {BASE_URL} [
 @mcp.tool()
 async def search_tickets(
     query: str,
-    limit: int = 10,
+    page: int = 1,
+    per_page: int = 10,
     start_date: str = "",
     end_date: str = "",
     sentiment: str = "",
@@ -60,7 +62,7 @@ async def search_tickets(
     priority_only: bool = False
 ) -> str:
     """
-    Search Autotask tickets using advanced semantic and keyword search with sentiment filtering.
+    Search Autotask tickets using advanced semantic and keyword search with sentiment filtering and pagination.
 
     This tool uses a sophisticated multi-method search combining:
     - BM25 full-text search
@@ -68,11 +70,13 @@ async def search_tickets(
     - Fuzzy matching for typos
     - AI-powered reranking for relevance
     - Sentiment analysis filtering
+    - Redis caching for fast pagination
 
     Args:
         query: Search query (supports partial company names, keywords, descriptions).
                Works well with imperfect queries including typos and vague descriptions.
-        limit: Maximum number of results to return (default: 10, max: 100)
+        page: Page number to retrieve (default: 1, starts at 1)
+        per_page: Results per page (default: 10, max: 100)
         start_date: Optional start date filter in YYYY-MM-DD format (e.g., "2024-01-01").
                    Only tickets created on or after this date will be returned.
         end_date: Optional end date filter in YYYY-MM-DD format (e.g., "2024-12-31").
@@ -84,29 +88,31 @@ async def search_tickets(
         priority_only: If True, only return tickets flagged as priority (high negative sentiment + high frustration).
 
     Returns:
-        Formatted search results with task numbers, titles, descriptions, relevance scores, and sentiment data.
-        Results are ranked by relevance with the most relevant tickets first.
+        Formatted search results with task numbers, titles, descriptions, relevance scores, sentiment data,
+        and pagination information. Results are ranked by relevance with the most relevant tickets first.
 
     Examples:
         - "password reset issues"
-        - "outlook email problems for ABC Company"
-        - "network connectivity" with sentiment="negative"
+        - "outlook email problems for ABC Company" page=2
+        - "network connectivity" with sentiment="negative" per_page=25
         - "support tickets" with min_frustration=0.7
         - "customer issues" with priority_only=True
     """
-    logger.info(f"Searching tickets with query: '{query}' (limit: {limit}, dates: {start_date} to {end_date}, sentiment: {sentiment}, frustration: {min_frustration}, priority: {priority_only}) [MCPS-SEARCH]")
+    logger.info(f"Searching tickets with query: '{query}' (page: {page}, per_page: {per_page}, dates: {start_date} to {end_date}, sentiment: {sentiment}, frustration: {min_frustration}, priority: {priority_only}) [MCPS-SEARCH]")
 
-    # Validate limit
-    if limit < 1:
-        limit = 10
-    if limit > 100:
-        limit = 100
+    # Validate pagination parameters
+    if page < 1:
+        page = 1
+    if per_page < 1:
+        per_page = 10
+    if per_page > 100:
+        per_page = 100
 
     try:
         # Make API request using Bearer token auth
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=60.0) as client:
             headers = {"Authorization": f"Bearer {API_KEY}"}
-            params = {"q": query, "limit": limit}
+            params = {"q": query, "page": page, "per_page": per_page}
 
             # Add date filters if provided
             if start_date:
@@ -150,29 +156,70 @@ async def search_tickets(
                     "The Autotask search service may be experiencing issues."
                 )
 
+            # Handle async task response (202 Accepted)
+            if response.status_code == 202:
+                data = response.json()
+                task_id = data.get('task_id')
+                logger.info(f"Search is processing asynchronously, task_id: {task_id} [MCPS-ASYNC]")
+
+                # Poll for task completion
+                status_url = f"{BASE_URL}/api/search/status/{task_id}/"
+                max_polls = 20  # Poll for up to 60 seconds (3s * 20)
+
+                for poll_attempt in range(max_polls):
+                    await asyncio.sleep(3)  # Wait 3 seconds between polls
+                    status_response = await client.get(status_url, headers=headers)
+                    status_data = status_response.json()
+
+                    if status_data.get('status') == 'SUCCESS':
+                        logger.info(f"Async search completed [MCPS-ASYNC-OK]")
+                        # Retry the original search request now that results are cached
+                        response = await client.get(url, headers=headers, params=params)
+                        break
+                    elif status_data.get('status') == 'FAILURE':
+                        logger.error(f"Async search failed [MCPS-ASYNC-FAIL]")
+                        return json.dumps({
+                            "error": "Search task failed",
+                            "details": status_data.get('error', 'Unknown error')
+                        }, indent=2)
+
+                    logger.info(f"Polling attempt {poll_attempt + 1}/{max_polls} [MCPS-POLL]")
+
+                # If we exhausted polls, return status
+                if response.status_code == 202:
+                    return json.dumps({
+                        "status": "processing",
+                        "message": "Search is still processing. Please try again in a few moments.",
+                        "task_id": task_id
+                    }, indent=2)
+
             response.raise_for_status()
             data = response.json()
 
-            # Extract results
+            # Extract results and pagination
             results = data.get('results', [])
+            pagination = data.get('pagination', {})
 
             if not results:
                 logger.info(f"No results found for query: '{query}' [MCPS-NORES]")
                 return json.dumps({
                     "query": query,
                     "count": 0,
+                    "pagination": pagination,
                     "results": []
                 }, indent=2)
 
-            # Return structured JSON response
+            # Return structured JSON response with pagination
             response_data = {
                 "query": query,
                 "count": len(results),
+                "pagination": pagination,
                 "filters": data.get('filters', {}),
+                "cache_hit": data.get('cache_hit', False),
                 "results": results
             }
 
-            logger.info(f"Returned {len(results)} results [MCPS-OK]")
+            logger.info(f"Returned {len(results)} results (page {pagination.get('current_page', page)} of {pagination.get('total_pages', '?')}) [MCPS-OK]")
             return json.dumps(response_data, indent=2)
 
     except httpx.ConnectError:

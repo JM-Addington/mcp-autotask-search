@@ -311,6 +311,97 @@ async def get_ticket_details(task_id: int) -> str:
 
 
 @mcp.tool()
+async def get_tickets_details(task_ids: list[int]) -> str:
+    """
+    Get complete details for multiple tickets including all notes and time entries.
+
+    This tool fetches full ticket information for multiple tickets in a single request.
+    More efficient than calling get_ticket_details multiple times when you need
+    details for several tickets.
+
+    Args:
+        task_ids: List of task IDs to retrieve (max 50)
+
+    Returns:
+        JSON object with array of complete ticket details including title,
+        description, notes, time entries, sentiment, and related tickets.
+
+    Example:
+        get_tickets_details([12345, 67890, 11111])
+    """
+    logger.info(f"Getting details for {len(task_ids)} tickets [MCPS-DETAILS-BATCH]")
+
+    # Validate input
+    if not task_ids:
+        return "Error: task_ids cannot be empty"
+
+    if len(task_ids) > 50:
+        return f"Error: Maximum 50 tickets allowed. You requested {len(task_ids)}."
+
+    try:
+        # Make API request
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            headers = {
+                "Authorization": f"Bearer {API_KEY}",
+                "Content-Type": "application/json"
+            }
+            url = f"{BASE_URL}/api/tickets/details/"
+
+            logger.info(f"Making POST request to: {url} [MCPS-REQ]")
+
+            response = await client.post(url, headers=headers, json={"task_ids": task_ids})
+
+            # Check for errors
+            if response.status_code == 401:
+                logger.error(f"Authentication failed [MCPS-AUTH]")
+                return (
+                    "Error: Authentication failed. Please check your AUTOTASK_API_KEY."
+                )
+
+            if response.status_code == 400:
+                logger.error(f"Bad request: {response.text} [MCPS-BADREQ]")
+                try:
+                    error_data = response.json()
+                    return f"Error: {error_data.get('error', 'Invalid request')}"
+                except Exception:
+                    return f"Error: Bad request - {response.text}"
+
+            if response.status_code == 404:
+                logger.error(f"API endpoint not found [MCPS-404]")
+                return (
+                    f"Error: API endpoint not found at {BASE_URL}. "
+                    "Please check that the Autotask Django server is running and up to date."
+                )
+
+            if response.status_code >= 500:
+                logger.error(f"Server error: {response.status_code} [MCPS-SVR]")
+                return (
+                    f"Error: Server error ({response.status_code}). "
+                    "The Autotask service may be experiencing issues."
+                )
+
+            response.raise_for_status()
+            data = response.json()
+
+            # Return structured JSON response
+            logger.info(f"Retrieved details for {data.get('total_found', 0)} of {data.get('total_requested', 0)} tickets [MCPS-OK]")
+            return json.dumps(data, indent=2)
+
+    except httpx.ConnectError:
+        logger.error(f"Connection failed to {BASE_URL} [MCPS-CONN]")
+        return (
+            f"Error: Could not connect to Autotask API at {BASE_URL}. "
+            "Please check that the Django server is running."
+        )
+    except httpx.TimeoutException:
+        logger.error(f"Request timeout [MCPS-TIMEOUT]")
+        return "Error: Request timed out. Please try again."
+    except Exception as e:
+        logger.error(f"Unexpected error getting batch ticket details: {str(e)} [MCPS-ERR]")
+        return f"Error: An unexpected error occurred: {str(e)}"
+
+
+@mcp.tool()
 async def get_related_tickets(
     task_id: int,
     page: int = 1,

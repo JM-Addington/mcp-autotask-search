@@ -875,6 +875,180 @@ async def search_contacts(
         return f"Error: An unexpected error occurred: {str(e)}"
 
 
+@mcp.tool()
+async def get_tickets_company(company_ids: list[int]) -> str:
+    """
+    Get all tickets assigned to one or more companies.
+
+    This tool retrieves tickets that are formally assigned to the specified companies
+    in the Autotask system. Use this after finding companies with search_companies.
+
+    Args:
+        company_ids: List of company/account IDs (max 50)
+
+    Returns:
+        JSON with tickets assigned to these companies, including sentiment,
+        summaries, and hours data. Returns up to 1000 most recent tickets.
+
+    Example:
+        get_tickets_company([12345, 67890])
+    """
+    logger.info(f"Getting tickets for {len(company_ids)} companies [MCPS-TICKETS-COMPANY]")
+
+    # Validate input
+    if not company_ids:
+        return "Error: company_ids cannot be empty"
+
+    if len(company_ids) > 50:
+        return f"Error: Maximum 50 companies allowed. You requested {len(company_ids)}."
+
+    try:
+        # Make API request
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            headers = {
+                "Authorization": f"Bearer {API_KEY}",
+                "Content-Type": "application/json"
+            }
+            url = f"{BASE_URL}/api/tickets/by-company/"
+
+            logger.info(f"Making POST request to: {url} [MCPS-REQ]")
+
+            response = await client.post(url, headers=headers, json={"company_ids": company_ids})
+
+            # Check for errors
+            if response.status_code == 401:
+                logger.error(f"Authentication failed [MCPS-AUTH]")
+                return "Error: Authentication failed. Please check your AUTOTASK_API_KEY."
+
+            if response.status_code == 400:
+                logger.error(f"Bad request: {response.text} [MCPS-BADREQ]")
+                try:
+                    error_data = response.json()
+                    return f"Error: {error_data.get('error', 'Invalid request')}"
+                except Exception:
+                    return f"Error: Bad request - {response.text}"
+
+            if response.status_code == 404:
+                logger.error(f"API endpoint not found [MCPS-404]")
+                return (
+                    f"Error: API endpoint not found at {BASE_URL}. "
+                    "Please check that the Autotask Django server is running and up to date."
+                )
+
+            if response.status_code >= 500:
+                logger.error(f"Server error: {response.status_code} [MCPS-SVR]")
+                return (
+                    f"Error: Server error ({response.status_code}). "
+                    "The Autotask service may be experiencing issues."
+                )
+
+            response.raise_for_status()
+            data = response.json()
+
+            logger.info(f"Retrieved {data.get('total_tickets', 0)} tickets for {data.get('total_companies', 0)} companies [MCPS-OK]")
+            return json.dumps(data, indent=2)
+
+    except httpx.ConnectError:
+        logger.error(f"Connection failed to {BASE_URL} [MCPS-CONN]")
+        return (
+            f"Error: Could not connect to Autotask API at {BASE_URL}. "
+            "Please check that the Django server is running."
+        )
+    except httpx.TimeoutException:
+        logger.error(f"Request timeout [MCPS-TIMEOUT]")
+        return "Error: Request timed out. Please try again."
+    except Exception as e:
+        logger.error(f"Unexpected error getting company tickets: {str(e)} [MCPS-ERR]")
+        return f"Error: An unexpected error occurred: {str(e)}"
+
+
+@mcp.tool()
+async def get_tickets_contact(contact_ids: list[int]) -> str:
+    """
+    Get all tickets assigned to one or more contacts.
+
+    This tool retrieves tickets that are formally assigned to the specified contacts
+    in the Autotask system. Use this after finding contacts with search_contacts.
+
+    Args:
+        contact_ids: List of contact IDs (max 50)
+
+    Returns:
+        JSON with tickets assigned to these contacts, including sentiment,
+        summaries, and hours data. Returns up to 1000 most recent tickets.
+
+    Example:
+        get_tickets_contact([12345, 67890])
+    """
+    logger.info(f"Getting tickets for {len(contact_ids)} contacts [MCPS-TICKETS-CONTACT]")
+
+    # Validate input
+    if not contact_ids:
+        return "Error: contact_ids cannot be empty"
+
+    if len(contact_ids) > 50:
+        return f"Error: Maximum 50 contacts allowed. You requested {len(contact_ids)}."
+
+    try:
+        # Make API request
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            headers = {
+                "Authorization": f"Bearer {API_KEY}",
+                "Content-Type": "application/json"
+            }
+            url = f"{BASE_URL}/api/tickets/by-contact/"
+
+            logger.info(f"Making POST request to: {url} [MCPS-REQ]")
+
+            response = await client.post(url, headers=headers, json={"contact_ids": contact_ids})
+
+            # Check for errors
+            if response.status_code == 401:
+                logger.error(f"Authentication failed [MCPS-AUTH]")
+                return "Error: Authentication failed. Please check your AUTOTASK_API_KEY."
+
+            if response.status_code == 400:
+                logger.error(f"Bad request: {response.text} [MCPS-BADREQ]")
+                try:
+                    error_data = response.json()
+                    return f"Error: {error_data.get('error', 'Invalid request')}"
+                except Exception:
+                    return f"Error: Bad request - {response.text}"
+
+            if response.status_code == 404:
+                logger.error(f"API endpoint not found [MCPS-404]")
+                return (
+                    f"Error: API endpoint not found at {BASE_URL}. "
+                    "Please check that the Autotask Django server is running and up to date."
+                )
+
+            if response.status_code >= 500:
+                logger.error(f"Server error: {response.status_code} [MCPS-SVR]")
+                return (
+                    f"Error: Server error ({response.status_code}). "
+                    "The Autotask service may be experiencing issues."
+                )
+
+            response.raise_for_status()
+            data = response.json()
+
+            logger.info(f"Retrieved {data.get('total_tickets', 0)} tickets for {data.get('total_contacts', 0)} contacts [MCPS-OK]")
+            return json.dumps(data, indent=2)
+
+    except httpx.ConnectError:
+        logger.error(f"Connection failed to {BASE_URL} [MCPS-CONN]")
+        return (
+            f"Error: Could not connect to Autotask API at {BASE_URL}. "
+            "Please check that the Django server is running."
+        )
+    except httpx.TimeoutException:
+        logger.error(f"Request timeout [MCPS-TIMEOUT]")
+        return "Error: Request timed out. Please try again."
+    except Exception as e:
+        logger.error(f"Unexpected error getting contact tickets: {str(e)} [MCPS-ERR]")
+        return f"Error: An unexpected error occurred: {str(e)}"
+
+
 def main():
     """Main entry point for the MCP server."""
     logger.info("Starting Autotask Search MCP Server [MCPS-START]")

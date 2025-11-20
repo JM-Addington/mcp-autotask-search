@@ -311,7 +311,11 @@ async def get_ticket_details(task_id: int) -> str:
 
 
 @mcp.tool()
-async def get_related_tickets(task_id: int, limit: int = 10) -> str:
+async def get_related_tickets(
+    task_id: int,
+    page: int = 1,
+    per_page: int = 10
+) -> str:
     """
     Find tickets semantically related to a given ticket using vector similarity and AI re-ranking.
 
@@ -328,28 +332,32 @@ async def get_related_tickets(task_id: int, limit: int = 10) -> str:
 
     Args:
         task_id: The numeric task ID of the ticket to find related tickets for
-        limit: Maximum number of related tickets to return (default: 10, max: 30)
+        page: Page number (default: 1). Note: Currently only page 1 is supported.
+        per_page: Results per page (default: 10, max: 30)
 
     Returns:
         List of related tickets with task numbers, titles, and relevance scores.
         Results are ranked by relevance with the most related tickets first.
 
     Example:
-        get_related_tickets(12345, limit=10)
+        get_related_tickets(12345, per_page=10)
     """
-    logger.info(f"Finding related tickets for task_id: {task_id} (limit: {limit}) [MCPS-RELATED]")
+    logger.info(f"Finding related tickets for task_id: {task_id} (page: {page}, per_page: {per_page}) [MCPS-RELATED]")
 
-    # Validate limit
-    if limit < 1:
-        limit = 10
-    if limit > 30:
-        limit = 30
+    # Validate pagination parameters
+    if page < 1:
+        page = 1
+    if per_page < 1:
+        per_page = 10
+    if per_page > 30:
+        per_page = 30
 
     try:
         # Make API request
         async with httpx.AsyncClient(timeout=30.0) as client:
             headers = {"Authorization": f"Bearer {API_KEY}"}
-            params = {"limit": limit}
+            # API endpoint uses 'limit' parameter (pagination not yet supported in API)
+            params = {"limit": per_page}
             url = f"{BASE_URL}/api/ticket/{task_id}/related/"
 
             logger.info(f"Making request to: {url} [MCPS-REQ]")
@@ -512,6 +520,267 @@ async def get_tickets_notes(task_ids: list[int] = None, task_numbers: list[str] 
         return "Error: Request timed out. Please try again."
     except Exception as e:
         logger.error(f"Unexpected error getting bulk notes: {str(e)} [MCPS-NOTES-ERR]")
+        return f"Error: An unexpected error occurred: {str(e)}"
+
+
+@mcp.tool()
+async def search_companies(
+    query: str = "",
+    page: int = 1,
+    per_page: int = 25,
+    active_only: bool = True,
+    match_type: str = "fuzzy"
+) -> str:
+    """
+    Search for companies (accounts) in Autotask.
+
+    This tool searches the Autotask companies/accounts database using various
+    matching strategies. It's useful for finding company information, looking up
+    account IDs for filtering other searches, or exploring the customer base.
+
+    Args:
+        query: Search query (optional, returns all if not provided). Searches company names.
+        page: Page number (default: 1, starts at 1)
+        per_page: Results per page (default: 25, max: 100)
+        active_only: Filter for active companies only (default: true)
+        match_type: Search match type (default: "fuzzy")
+                   - "fuzzy": Handles typos and partial matches (recommended)
+                   - "exact": Exact match only
+                   - "wildcard": SQL wildcard matching (% and _)
+
+    Returns:
+        List of companies with account IDs, names, active status, and pagination info.
+
+    Examples:
+        - search_companies(query="Acme Corp")
+        - search_companies(query="tech", active_only=True, per_page=50)
+        - search_companies(match_type="exact", query="ABC Company")
+    """
+    logger.info(f"Searching companies with query: '{query}' (page: {page}, per_page: {per_page}, active_only: {active_only}, match_type: {match_type}) [MCPS-SEARCH-COMPANIES]")
+
+    # Validate pagination parameters
+    if page < 1:
+        page = 1
+    if per_page < 1:
+        per_page = 25
+    if per_page > 100:
+        per_page = 100
+
+    try:
+        # Make API request
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            headers = {"Authorization": f"Bearer {API_KEY}"}
+            params = {
+                'page': page,
+                'per_page': per_page,
+                'active_only': 'true' if active_only else 'false',
+                'match_type': match_type
+            }
+
+            if query:
+                params['q'] = query
+
+            url = f"{BASE_URL}/api/companies/search/"
+            logger.info(f"Making request to: {url} [MCPS-REQ]")
+
+            response = await client.get(url, headers=headers, params=params)
+
+            # Check for errors
+            if response.status_code == 401:
+                logger.error(f"Authentication failed [MCPS-AUTH]")
+                return (
+                    "Error: Authentication failed. Please check your AUTOTASK_API_KEY. "
+                    "The API key may be invalid or expired."
+                )
+
+            if response.status_code == 404:
+                logger.error(f"API endpoint not found [MCPS-404]")
+                return (
+                    f"Error: API endpoint not found at {BASE_URL}. "
+                    "Please check that the Autotask Django server is running and "
+                    "AUTOTASK_API_BASE_URL is set correctly."
+                )
+
+            if response.status_code >= 500:
+                logger.error(f"Server error: {response.status_code} [MCPS-SVR]")
+                return (
+                    f"Error: Server error ({response.status_code}). "
+                    "The Autotask search service may be experiencing issues."
+                )
+
+            response.raise_for_status()
+            data = response.json()
+
+            if not data.get('success'):
+                logger.error(f"API returned error: {data.get('error', 'Unknown error')} [MCPS-ERR]")
+                return json.dumps({
+                    'error': data.get('error', 'Unknown error occurred'),
+                    'companies': [],
+                    'pagination': {},
+                    'filters': {}
+                }, indent=2)
+
+            companies = data.get('companies', [])
+            pagination = data.get('pagination', {})
+
+            response_data = {
+                'query': query,
+                'count': len(companies),
+                'pagination': pagination,
+                'filters': data.get('filters', {}),
+                'companies': companies
+            }
+
+            logger.info(f"Returned {len(companies)} companies (page {pagination.get('current_page', page)} of {pagination.get('total_pages', '?')}) [MCPS-OK]")
+            return json.dumps(response_data, indent=2)
+
+    except httpx.ConnectError:
+        logger.error(f"Connection failed to {BASE_URL} [MCPS-CONN]")
+        return (
+            f"Error: Could not connect to Autotask API at {BASE_URL}. "
+            "Please check that the Django server is running with: "
+            "python manage.py runserver"
+        )
+    except httpx.TimeoutException:
+        logger.error(f"Request timeout [MCPS-TIMEOUT]")
+        return (
+            "Error: Request timed out. Please try again."
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error during company search: {str(e)} [MCPS-ERR]")
+        return f"Error: An unexpected error occurred: {str(e)}"
+
+
+@mcp.tool()
+async def search_contacts(
+    query: str = "",
+    page: int = 1,
+    per_page: int = 25,
+    active_only: bool = True,
+    match_type: str = "fuzzy",
+    company_id: int = None
+) -> str:
+    """
+    Search for contacts (account contacts) in Autotask.
+
+    This tool searches the Autotask contacts database. It's useful for finding
+    contact information, looking up contact IDs for filtering ticket searches,
+    or exploring contacts associated with a specific company.
+
+    Args:
+        query: Search query (optional, returns all if not provided). Searches contact names.
+        page: Page number (default: 1, starts at 1)
+        per_page: Results per page (default: 25, max: 100)
+        active_only: Filter for active contacts only (default: true)
+        match_type: Search match type (default: "fuzzy")
+                   - "fuzzy": Handles typos and partial matches (recommended)
+                   - "exact": Exact match only
+                   - "wildcard": SQL wildcard matching (% and _)
+        company_id: Optional filter by company/account ID (from search_companies)
+
+    Returns:
+        List of contacts with contact IDs, names, company info, active status, and pagination info.
+
+    Examples:
+        - search_contacts(query="John Smith")
+        - search_contacts(company_id=12345, active_only=True)
+        - search_contacts(query="support", match_type="fuzzy", per_page=50)
+    """
+    logger.info(f"Searching contacts with query: '{query}' (page: {page}, per_page: {per_page}, active_only: {active_only}, match_type: {match_type}, company_id: {company_id}) [MCPS-SEARCH-CONTACTS]")
+
+    # Validate pagination parameters
+    if page < 1:
+        page = 1
+    if per_page < 1:
+        per_page = 25
+    if per_page > 100:
+        per_page = 100
+
+    try:
+        # Make API request
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            headers = {"Authorization": f"Bearer {API_KEY}"}
+            params = {
+                'page': page,
+                'per_page': per_page,
+                'active_only': 'true' if active_only else 'false',
+                'match_type': match_type
+            }
+
+            if query:
+                params['q'] = query
+
+            if company_id is not None:
+                params['company_id'] = company_id
+
+            url = f"{BASE_URL}/api/contacts/search/"
+            logger.info(f"Making request to: {url} [MCPS-REQ]")
+
+            response = await client.get(url, headers=headers, params=params)
+
+            # Check for errors
+            if response.status_code == 401:
+                logger.error(f"Authentication failed [MCPS-AUTH]")
+                return (
+                    "Error: Authentication failed. Please check your AUTOTASK_API_KEY. "
+                    "The API key may be invalid or expired."
+                )
+
+            if response.status_code == 404:
+                logger.error(f"API endpoint not found [MCPS-404]")
+                return (
+                    f"Error: API endpoint not found at {BASE_URL}. "
+                    "Please check that the Autotask Django server is running and "
+                    "AUTOTASK_API_BASE_URL is set correctly."
+                )
+
+            if response.status_code >= 500:
+                logger.error(f"Server error: {response.status_code} [MCPS-SVR]")
+                return (
+                    f"Error: Server error ({response.status_code}). "
+                    "The Autotask search service may be experiencing issues."
+                )
+
+            response.raise_for_status()
+            data = response.json()
+
+            if not data.get('success'):
+                logger.error(f"API returned error: {data.get('error', 'Unknown error')} [MCPS-ERR]")
+                return json.dumps({
+                    'error': data.get('error', 'Unknown error occurred'),
+                    'contacts': [],
+                    'pagination': {},
+                    'filters': {}
+                }, indent=2)
+
+            contacts = data.get('contacts', [])
+            pagination = data.get('pagination', {})
+
+            response_data = {
+                'query': query,
+                'count': len(contacts),
+                'pagination': pagination,
+                'filters': data.get('filters', {}),
+                'contacts': contacts
+            }
+
+            logger.info(f"Returned {len(contacts)} contacts (page {pagination.get('current_page', page)} of {pagination.get('total_pages', '?')}) [MCPS-OK]")
+            return json.dumps(response_data, indent=2)
+
+    except httpx.ConnectError:
+        logger.error(f"Connection failed to {BASE_URL} [MCPS-CONN]")
+        return (
+            f"Error: Could not connect to Autotask API at {BASE_URL}. "
+            "Please check that the Django server is running with: "
+            "python manage.py runserver"
+        )
+    except httpx.TimeoutException:
+        logger.error(f"Request timeout [MCPS-TIMEOUT]")
+        return (
+            "Error: Request timed out. Please try again."
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error during contact search: {str(e)} [MCPS-ERR]")
         return f"Error: An unexpected error occurred: {str(e)}"
 
 

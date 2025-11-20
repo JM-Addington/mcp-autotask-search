@@ -1,18 +1,20 @@
 # Autotask Search MCP Server
 
-A Model Context Protocol (MCP) server that exposes Autotask ticket search functionality to LLMs like Claude.
+A Model Context Protocol (MCP) server that exposes Autotask search functionality to LLMs like Claude.
 
 ## Overview
 
-This MCP server provides LLMs with the ability to search and retrieve Autotask tickets using advanced semantic search, keyword matching, and AI-powered reranking. It integrates seamlessly with Claude Desktop, Cursor, and other MCP-compatible clients.
+This MCP server provides LLMs with the ability to search and retrieve Autotask tickets, companies, and contacts using advanced semantic search, keyword matching, and AI-powered reranking. It integrates seamlessly with Claude Desktop, Cursor, and other MCP-compatible clients.
 
 ## Features
 
-- **Advanced Search**: Multi-method search combining BM25, semantic vectors, and fuzzy matching
+- **Advanced Ticket Search**: Multi-method search combining BM25, semantic vectors, and fuzzy matching
 - **AI Reranking**: Results are reranked using cross-encoder models for optimal relevance
 - **Related Tickets**: Find semantically similar tickets using vector similarity and AI re-ranking
 - **Detailed Ticket Info**: Retrieve complete ticket details including all notes
 - **Bulk Operations**: Fetch notes for multiple tickets efficiently
+- **Company Search**: Search and browse Autotask companies/accounts with flexible matching
+- **Contact Search**: Search contacts with optional company filtering
 - **LLM-Optimized**: Results formatted for easy LLM comprehension
 - **Robust Error Handling**: Clear error messages with unique grep codes for debugging
 - **Easy Setup**: Shell wrapper handles venv creation and dependencies
@@ -138,13 +140,14 @@ Find tickets semantically related to a given ticket using vector similarity and 
 
 **Parameters:**
 - `task_id` (integer, required): The numeric task ID to find related tickets for
-- `limit` (integer, optional): Maximum results to return (default: 10, max: 30)
+- `page` (integer, optional): Page number (default: 1). Note: Currently only page 1 is supported.
+- `per_page` (integer, optional): Results per page (default: 10, max: 30)
 
 **Example Usage:**
 ```
 Find tickets related to task 12345
 Show me similar tickets to ticket 67890
-Get 20 related tickets for task_id 54321
+Get 20 related tickets for task_id 54321 with per_page=20
 ```
 
 **How It Works:**
@@ -183,6 +186,71 @@ Get all notes for task_ids [100, 101, 102]
 - Note timestamps and titles
 - Notes grouped by ticket
 
+### 5. `search_companies`
+
+Search for companies (accounts) in Autotask.
+
+**Parameters:**
+- `query` (string, optional): Search query for company names (returns all if not provided)
+- `page` (integer, optional): Page number (default: 1)
+- `per_page` (integer, optional): Results per page (default: 25, max: 100)
+- `active_only` (boolean, optional): Filter for active companies only (default: true)
+- `match_type` (string, optional): Search match type (default: "fuzzy")
+  - `"fuzzy"`: Handles typos and partial matches (recommended)
+  - `"exact"`: Exact match only
+  - `"wildcard"`: SQL wildcard matching (% and _)
+
+**Example Usage:**
+```
+Search for companies named "Acme Corp"
+Find all active companies with "tech" in the name
+Get company details for "ABC Company" with exact matching
+```
+
+**Use Cases:**
+- Look up company/account IDs for filtering ticket searches
+- Find companies by partial name
+- Browse the customer base
+- Verify company names and active status
+
+**Returns:**
+- List of companies with account IDs, names, and active status
+- Pagination information
+- Filter metadata
+
+### 6. `search_contacts`
+
+Search for contacts (account contacts) in Autotask.
+
+**Parameters:**
+- `query` (string, optional): Search query for contact names (returns all if not provided)
+- `page` (integer, optional): Page number (default: 1)
+- `per_page` (integer, optional): Results per page (default: 25, max: 100)
+- `active_only` (boolean, optional): Filter for active contacts only (default: true)
+- `match_type` (string, optional): Search match type (default: "fuzzy")
+  - `"fuzzy"`: Handles typos and partial matches (recommended)
+  - `"exact"`: Exact match only
+  - `"wildcard"`: SQL wildcard matching (% and _)
+- `company_id` (integer, optional): Filter by company/account ID (from search_companies)
+
+**Example Usage:**
+```
+Search for contacts named "John Smith"
+Find all contacts for company ID 12345
+Look up support contacts with "engineer" in their name
+```
+
+**Use Cases:**
+- Look up contact IDs for filtering ticket searches
+- Find contacts associated with a specific company
+- Browse contacts by name
+- Verify contact information and active status
+
+**Returns:**
+- List of contacts with contact IDs, names, company info, and active status
+- Pagination information
+- Filter metadata
+
 ## Usage Examples
 
 ### In Claude Desktop/Cursor
@@ -205,6 +273,16 @@ Once configured, you can ask Claude:
 "Get all notes for tickets 12345, 67890, and 11111"
 
 "Show me notes for tickets T20240101.0001 and T20240102.0005"
+
+"Search for companies named Acme Corp"
+
+"Find all companies with 'tech' in the name"
+
+"Search for contacts named John Smith"
+
+"Show me all contacts for company ID 12345"
+
+"Find active contacts at ABC Company"
 ```
 
 Claude will use the MCP tools to search the Autotask database and return formatted results.

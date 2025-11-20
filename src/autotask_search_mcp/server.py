@@ -876,24 +876,29 @@ async def search_contacts(
 
 
 @mcp.tool()
-async def get_tickets_company(company_ids: list[int]) -> str:
+async def get_tickets_company(company_ids: list[int], page: int = 1, per_page: int = 100) -> str:
     """
     Get all tickets assigned to one or more companies.
 
     This tool retrieves tickets that are formally assigned to the specified companies
     in the Autotask system. Use this after finding companies with search_companies.
 
+    Results are returned in reverse chronological order (newest first) without any
+    search ranking or filtering applied.
+
     Args:
         company_ids: List of company/account IDs (max 50)
+        page: Page number (default: 1)
+        per_page: Results per page, max 1000 (default: 100)
 
     Returns:
         JSON with tickets assigned to these companies, including sentiment,
-        summaries, and hours data. Returns up to 1000 most recent tickets.
+        summaries, hours data, and pagination metadata.
 
     Example:
-        get_tickets_company([12345, 67890])
+        get_tickets_company([12345, 67890], page=1, per_page=100)
     """
-    logger.info(f"Getting tickets for {len(company_ids)} companies [MCPS-TICKETS-COMPANY]")
+    logger.info(f"Getting tickets for {len(company_ids)} companies (page {page}, per_page {per_page}) [MCPS-TICKETS-COMPANY]")
 
     # Validate input
     if not company_ids:
@@ -913,7 +918,11 @@ async def get_tickets_company(company_ids: list[int]) -> str:
 
             logger.info(f"Making POST request to: {url} [MCPS-REQ]")
 
-            response = await client.post(url, headers=headers, json={"company_ids": company_ids})
+            response = await client.post(url, headers=headers, json={
+                "company_ids": company_ids,
+                "page": page,
+                "per_page": per_page
+            })
 
             # Check for errors
             if response.status_code == 401:
@@ -945,7 +954,8 @@ async def get_tickets_company(company_ids: list[int]) -> str:
             response.raise_for_status()
             data = response.json()
 
-            logger.info(f"Retrieved {data.get('total_tickets', 0)} tickets for {data.get('total_companies', 0)} companies [MCPS-OK]")
+            pagination = data.get('pagination', {})
+            logger.info(f"Retrieved {len(data.get('tickets', []))} tickets (page {pagination.get('current_page', page)} of {pagination.get('total_pages', '?')}, total: {pagination.get('total_count', '?')}) for {data.get('total_companies', 0)} companies [MCPS-OK]")
             return json.dumps(data, indent=2)
 
     except httpx.ConnectError:
@@ -963,24 +973,29 @@ async def get_tickets_company(company_ids: list[int]) -> str:
 
 
 @mcp.tool()
-async def get_tickets_contact(contact_ids: list[int]) -> str:
+async def get_tickets_contact(contact_ids: list[int], page: int = 1, per_page: int = 100) -> str:
     """
     Get all tickets assigned to one or more contacts.
 
     This tool retrieves tickets that are formally assigned to the specified contacts
     in the Autotask system. Use this after finding contacts with search_contacts.
 
+    Results are returned in reverse chronological order (newest first) without any
+    search ranking or filtering applied.
+
     Args:
         contact_ids: List of contact IDs (max 50)
+        page: Page number (default: 1)
+        per_page: Results per page, max 1000 (default: 100)
 
     Returns:
         JSON with tickets assigned to these contacts, including sentiment,
-        summaries, and hours data. Returns up to 1000 most recent tickets.
+        summaries, hours data, and pagination metadata.
 
     Example:
-        get_tickets_contact([12345, 67890])
+        get_tickets_contact([12345, 67890], page=1, per_page=100)
     """
-    logger.info(f"Getting tickets for {len(contact_ids)} contacts [MCPS-TICKETS-CONTACT]")
+    logger.info(f"Getting tickets for {len(contact_ids)} contacts (page {page}, per_page {per_page}) [MCPS-TICKETS-CONTACT]")
 
     # Validate input
     if not contact_ids:
@@ -1000,7 +1015,11 @@ async def get_tickets_contact(contact_ids: list[int]) -> str:
 
             logger.info(f"Making POST request to: {url} [MCPS-REQ]")
 
-            response = await client.post(url, headers=headers, json={"contact_ids": contact_ids})
+            response = await client.post(url, headers=headers, json={
+                "contact_ids": contact_ids,
+                "page": page,
+                "per_page": per_page
+            })
 
             # Check for errors
             if response.status_code == 401:
@@ -1032,7 +1051,8 @@ async def get_tickets_contact(contact_ids: list[int]) -> str:
             response.raise_for_status()
             data = response.json()
 
-            logger.info(f"Retrieved {data.get('total_tickets', 0)} tickets for {data.get('total_contacts', 0)} contacts [MCPS-OK]")
+            pagination = data.get('pagination', {})
+            logger.info(f"Retrieved {len(data.get('tickets', []))} tickets (page {pagination.get('current_page', page)} of {pagination.get('total_pages', '?')}, total: {pagination.get('total_count', '?')}) for {data.get('total_contacts', 0)} contacts [MCPS-OK]")
             return json.dumps(data, indent=2)
 
     except httpx.ConnectError:

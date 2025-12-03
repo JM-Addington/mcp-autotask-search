@@ -33,7 +33,7 @@ jobs:
         id: claude-review
         uses: anthropics/claude-code-action@v1
         with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: |
             Please review this pull request and provide feedback on:
             - Code quality and best practices
@@ -91,7 +91,7 @@ jobs:
         id: credential-review
         uses: anthropics/claude-code-action@v1
         with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: |
             Review this PR for credential and secret handling security in this Python MCP (Model Context Protocol) server.
 
@@ -180,7 +180,7 @@ jobs:
         id: placeholder-detection
         uses: anthropics/claude-code-action@v1
         with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: |
             Review this PR to detect incomplete or placeholder code that should not be merged to production.
 

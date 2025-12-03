@@ -1,0 +1,226 @@
+name: Claude Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    # Optional: Only run on specific file changes
+    # paths:
+    #   - "src/**/*.py"
+  workflow_dispatch:  # Allow manual triggering for testing
+
+jobs:
+  claude-review:
+    # Optional: Filter by PR author
+    # if: |
+    #   github.event.pull_request.user.login == 'external-contributor' ||
+    #   github.event.pull_request.user.login == 'new-developer' ||
+    #   github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR'
+
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write  # Changed from read to write to allow PR comments
+      issues: write        # Changed from read to write to allow issue comments
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Run Claude Code Review
+        id: claude-review
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            Please review this pull request and provide feedback on:
+            - Code quality and best practices
+            - Potential bugs or issues
+            - Performance considerations
+            - Security concerns
+            - Test coverage
+
+            Use the repository's README.md for guidance on the project structure. Be constructive and helpful in your feedback.
+
+            Use `gh pr comment` with your Bash tool to leave your review as a comment on the PR.
+
+          # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
+          # or https://docs.anthropic.com/en/docs/claude-code/sdk#command-line for available options
+          claude_args: '--allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"'
+
+  security-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Need full history for diff analysis
+
+      - name: Run Security Scan
+        id: security-scan
+        uses: anthropics/claude-code-security-review@main
+        with:
+          comment-pr: true
+          claude-api-key: ${{ secrets.CLAUDE_API_KEY }}
+          # Optional: exclude directories if needed
+          # exclude-directories: 'tests,docs,venv'
+
+  credential-review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Run Credential Security Review
+        id: credential-review
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            Review this PR for credential and secret handling security in this Python MCP (Model Context Protocol) server.
+
+            **IMPORTANT: Use documented patterns as a STARTING POINT, but actively look for novel security issues, unexpected changes, and patterns not yet documented.**
+
+            **Project Context:**
+            - This is a FastMCP-based server that connects to an Autotask API backend
+            - Authentication uses Bearer token via `AUTOTASK_API_KEY` environment variable
+            - Server validates API key at startup and fails if missing
+
+            **Focus Areas:**
+
+            1. **No Hardcoded Secrets**:
+               - API keys, tokens, passwords must NOT be hardcoded
+               - Check for: string literals that look like keys/tokens
+               - Verify all credentials come from environment variables or secure config
+
+            2. **Environment Variable Handling**:
+               - API key validation at startup (should fail if missing)
+               - Proper use of python-dotenv for .env file loading
+               - No default/fallback values for credentials
+               - Check for new required environment variables documented
+
+            3. **Credential Leakage Prevention**:
+               - Error messages must NOT include API keys or tokens
+               - Logging statements must NOT log credentials
+               - Exception handling must NOT expose secrets in tracebacks
+               - Check logger.* calls for potential credential exposure
+
+            4. **HTTP Security**:
+               - Bearer token properly formatted in Authorization header
+               - HTTPS enforcement for production (check base URL handling)
+               - No credentials in URL query parameters
+               - Timeout settings on HTTP requests
+
+            5. **File Security**:
+               - .env file in .gitignore
+               - .env.example does NOT contain real credentials
+               - No credentials in pyproject.toml or other config files
+
+            6. **MCP-Specific Security**:
+               - Tool inputs properly validated
+               - No credential exposure through MCP tool responses
+               - Error responses don't leak internal details
+
+            **BEYOND DOCUMENTED PATTERNS - Also Look For:**
+               - Any new environment variables or configuration options
+               - Changes to how credentials are loaded or used
+               - New HTTP endpoints or API integrations
+               - Changes to error handling that might leak info
+               - New logging statements that might expose secrets
+               - Any file I/O that might read/write credentials
+
+            **Review Process:**
+            1. Use gh pr diff to get the changed files
+            2. Focus on src/ directory Python files
+            3. Check for any strings that look like credentials
+            4. Verify environment variable usage patterns
+            5. Review error handling and logging for credential exposure
+
+            **Output:**
+            Use `gh pr comment` to post your findings. Be specific about:
+            - Which files/lines have issues
+            - What the security risk is
+            - How to fix it
+
+            Only report genuine credential/secret handling concerns.
+
+          claude_args: '--allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"'
+
+  placeholder-detection:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Detect Placeholder Functions
+        id: placeholder-detection
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            Review this PR to detect incomplete or placeholder code that should not be merged to production.
+
+            **Scan for these placeholder patterns:**
+
+            **Python Files (*.py):**
+            - Functions with only `pass` statement (unless it's an intentional abstract class)
+            - Functions with only `...` (Ellipsis)
+            - Functions that only contain `raise NotImplementedError`
+            - TODO/FIXME/PLACEHOLDER comments indicating incomplete work
+            - Empty function bodies with just a docstring
+            - Functions that just log "TODO" or placeholder messages
+
+            **Shell Scripts (*.sh):**
+            - Functions with only `:` (no-op command)
+            - Functions with empty bodies
+            - TODO/FIXME/PLACEHOLDER comments indicating incomplete work
+
+            **Review Process:**
+            1. Use `gh pr diff` to get the changed files
+            2. Focus on Python files in src/ directory
+            3. Identify any placeholder patterns in NEW or MODIFIED code (ignore existing placeholders)
+            4. Distinguish between:
+               - Legitimate placeholders that need implementation before merge
+               - Intentional patterns (abstract base classes, interface definitions, etc.)
+               - Documentation TODOs vs implementation TODOs
+
+            **What NOT to flag:**
+            - Abstract base class methods with `pass` (these are intentional)
+            - Exception handlers with `pass` (intentional pass-through)
+            - TODO comments that document future enhancements (not blocking current work)
+            - Code in venv/ or third-party directories
+
+            **Output:**
+            Use `gh pr comment` to post findings. For each placeholder found, specify:
+            - File path and line number
+            - What the placeholder pattern is (function name, pattern type)
+            - Why it needs attention before merge
+            - Suggested action (implement, remove, or document as intentional)
+
+            If no problematic placeholders are found, do not post a comment.
+
+          claude_args: '--allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"'
